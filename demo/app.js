@@ -370,15 +370,60 @@ LIMIT  50;`;
     }
   }
 
+  // Camera: world point at the centre of the free map area + zoom factor.
+  // Recomputed on every resize, so the map always refits to the pane.
+  const FIT = { x0: 20, y0: 10, x1: 990, y1: 790 };           // world box shown at zoom 1
+  let cam = { cx: (FIT.x0 + FIT.x1) / 2, cy: (FIT.y0 + FIT.y1) / 2, zoom: 1 };
+  const TOP = 54, BOTTOM = 12, SIDE = 12;                       // room for the layer bar
+  function baseScale(w, h) {
+    return Math.min((w - SIDE * 2) / (FIT.x1 - FIT.x0), (h - TOP - BOTTOM) / (FIT.y1 - FIT.y0));
+  }
+  function applyCam() {
+    const s = view.base * cam.zoom;
+    const mx = view.w / 2, my = TOP + (view.h - TOP - BOTTOM) / 2;
+    view.s = s; view.ox = mx - cam.cx * s; view.oy = my - cam.cy * s;
+  }
   function resize() {
     const r = canvas.parentElement.getBoundingClientRect();
+    if (!r.width || !r.height) return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
-    const pad = 20;
-    const s = Math.min((r.width - pad * 2) / T.W, (r.height - pad * 2 - 40) / T.H);
-    view = { s, ox: (r.width - T.W * s) / 2, oy: (r.height - T.H * s) / 2 + 18, dpr, w: r.width, h: r.height };
+    view = { dpr, w: r.width, h: r.height, base: baseScale(r.width, r.height) };
+    applyCam();
     draw();
   }
+  function zoomAt(f, sx, sy) {
+    const nz = Math.max(1, Math.min(6, cam.zoom * f));
+    const wx = (sx - view.ox) / view.s, wy = (sy - view.oy) / view.s;   // world point under cursor
+    cam.zoom = nz;
+    const s = view.base * nz, mx = view.w / 2, my = TOP + (view.h - TOP - BOTTOM) / 2;
+    cam.cx = wx - (sx - mx) / s;                                         // keep it under the cursor
+    cam.cy = wy - (sy - my) / s;
+    applyCam(); draw();
+  }
+  function fit() { cam = { cx: (FIT.x0 + FIT.x1) / 2, cy: (FIT.y0 + FIT.y1) / 2, zoom: 1 }; applyCam(); draw(); }
+  canvas.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    zoomAt(Math.exp(-ev.deltaY * 0.0015), ev.clientX - r.left, ev.clientY - r.top);
+  }, { passive: false });
+  let drag = null;
+  canvas.addEventListener('pointerdown', (ev) => { drag = { x: ev.clientX, y: ev.clientY, moved: 0 }; canvas.setPointerCapture(ev.pointerId); });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy); drag.x = ev.clientX; drag.y = ev.clientY;
+    if (drag.moved > 4) {
+      canvas.classList.add('dragging'); $('#tip').style.display = 'none';
+      cam.cx -= dx / view.s; cam.cy -= dy / view.s; applyCam(); draw();
+    }
+  });
+  canvas.addEventListener('pointerup', () => { setTimeout(() => { drag = null; }, 0); canvas.classList.remove('dragging'); });
+  canvas.addEventListener('dblclick', () => fit());
+  $('#zin').addEventListener('click', () => zoomAt(1.4, view.w / 2, TOP + (view.h - TOP - BOTTOM) / 2));
+  $('#zout').addEventListener('click', () => zoomAt(1 / 1.4, view.w / 2, TOP + (view.h - TOP - BOTTOM) / 2));
+  $('#zfit').addEventListener('click', fit);
+  window.addEventListener('resize', resize);
   const X = (x) => view.ox + x * view.s, Y = (y) => view.oy + y * view.s;
   function path(pts, close) {
     ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])))); if (close) ctx.closePath();
@@ -447,14 +492,14 @@ LIMIT  50;`;
     // labels
     ctx.textAlign = 'center';
     ctx.fillStyle = css('--map-label');
-    ctx.font = `500 ${Math.max(10, 12 * view.s)}px "IBM Plex Sans", sans-serif`;
+    ctx.font = `500 ${Math.max(10, Math.min(14, 12 * view.s))}px "IBM Plex Sans", sans-serif`;
     T.HOODS.forEach((h) => ctx.fillText(h[0], X(h[1]), Y(h[2]) - 14));
-    ctx.font = `italic 400 ${Math.max(9.5, 11 * view.s)}px "IBM Plex Sans", sans-serif`;
+    ctx.font = `italic 400 ${Math.max(9.5, Math.min(13, 11 * view.s))}px "IBM Plex Sans", sans-serif`;
     const MUNI_POS = { 'Dübendorf': [900, 395], 'Wallisellen': [800, 120], 'Opfikon': [690, 40], 'Rümlang': [470, 22], 'Regensdorf': [220, 70], 'Oberengstringen': [85, 165], 'Schlieren': [40, 320], 'Urdorf': [70, 560], 'Uitikon': [170, 610], 'Stallikon': [235, 760], 'Adliswil': [380, 770], 'Kilchberg': [560, 712], 'Zollikon': [770, 560], 'Fällanden': [930, 470] };
     for (const k in MUNI_POS) { const p = MUNI_POS[k]; ctx.fillText(k, X(p[0]), Y(p[1])); }
-    ctx.font = `700 ${Math.max(11, 13 * view.s)}px "Archivo", sans-serif`; ctx.fillStyle = css('--map-boundary');
+    ctx.font = `700 ${Math.max(11, Math.min(16, 13 * view.s))}px "Archivo", sans-serif`; ctx.fillStyle = css('--map-boundary');
     ctx.fillText('ZÜRICH', X(520), Y(395));
-    ctx.font = `italic 400 ${Math.max(10, 12 * view.s)}px "IBM Plex Sans", sans-serif`; ctx.fillStyle = css('--accent');
+    ctx.font = `italic 400 ${Math.max(10, Math.min(14, 12 * view.s))}px "IBM Plex Sans", sans-serif`; ctx.fillStyle = css('--accent');
     ctx.fillText('Zürichsee', X(720), Y(690));
     ctx.fillStyle = css('--map-label'); ctx.fillText('Airport', X(T.AIRPORT[0]), Y(T.AIRPORT[1]) + 18);
     ctx.textAlign = 'left';
@@ -547,6 +592,7 @@ LIMIT  50;`;
   });
   canvas.addEventListener('mouseleave', () => { $('#tip').style.display = 'none'; });
   canvas.addEventListener('click', (ev) => {
+    if (drag && drag.moved > 4) return;
     const [wx, wy] = toWorld(ev);
     const l = nearestListing(wx, wy, 14);
     if (l) select(l.id);
